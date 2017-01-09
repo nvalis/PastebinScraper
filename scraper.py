@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 
 import requests
-import json
 from pymongo import MongoClient
+
+import json
 import time
-import arrow
+from datetime import datetime
 import re
 from multiprocessing import Process, Queue
-
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)-12s (%(levelname)s) - %(message)s')#, filename='scraper.log')
 logger = logging.getLogger(__name__)
@@ -72,12 +72,17 @@ def fetch_pastes(queue):
 			continue
 		logger.info('Scraping paste {}'.format(paste['key']))
 		# insert meta data
-		now = arrow.utcnow().datetime
+		now = datetime.utcnow()
 		collection.update_one(
 			{'key':paste['key']},
 			{
-				'$setOnInsert':{'first_seen':now}, '$set':{'last_seen':now,
-				'key':paste['key'], 'full_url':paste['full_url'], 'scrape_url':paste['scrape_url'], 'date':arrow.get(int(paste['date'])).datetime, 'size':int(paste['size']), 'expire':arrow.get(int(paste['expire'])).datetime, 'title':paste['title'], 'syntax':paste['syntax'], 'user':paste['user']}
+				'$setOnInsert':{'first_seen':now},
+				'$set':{
+					'last_seen':now, 'key':paste['key'], 'full_url':paste['full_url'],
+					'scrape_url':paste['scrape_url'], 'date':datetime.utcfromtimestamp(int(paste['date'])),
+					'size':int(paste['size']), 'expire':datetime.utcfromtimestamp(int(paste['expire'])),
+					'title':paste['title'], 'syntax':paste['syntax'], 'user':paste['user']
+				}
 			},
 			upsert=True
 		)
