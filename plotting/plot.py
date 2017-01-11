@@ -6,9 +6,10 @@ import arrow
 import humanize
 import numpy as np
 import pandas
-from bokeh.plotting import figure, curdoc, ColumnDataSource
+from bokeh.plotting import figure, curdoc
 from bokeh.layouts import row, column
-from bokeh.models import HoverTool, formatters, Spacer
+from bokeh.models import ColumnDataSource, formatters, Spacer, Circle, OpenURL, TapTool
+from bokeh.models.tools import HoverTool, CrosshairTool
 
 import datetime
 from datetime import timedelta
@@ -16,8 +17,11 @@ from datetime import timedelta
 db_client = MongoClient()
 collection = db_client['pastebin_scraper']['pastes']
 
-time_lim = arrow.utcnow().replace(hours=-24).datetime
-data = pandas.DataFrame(list(collection.find({'date':{'$gt':time_lim}, }, {'_id':0, 'content':0}).sort('date', -1).limit(10000)))
+to_timestamp = np.vectorize(lambda x: (x - datetime.datetime(1970, 1, 1)).total_seconds())
+from_timestamp = np.vectorize(lambda x: datetime.datetime.fromtimestamp(x))
+
+time_lim = arrow.utcnow().replace(hours=-12).datetime
+data = pandas.DataFrame(list(collection.find({'date':{'$gt':time_lim}, }, {'_id':0, 'content':0, 'first_seen':0, 'last_seen':0, 'scrape_url':0}).sort('date', -1)))
 
 exp = data['expire'] > '1970-01-01 01:00:00'
 source_nonexp = ColumnDataSource(data[~exp])
@@ -27,19 +31,32 @@ source_exp.add([d.strftime("%d.%m.%Y %H:%M:%S") for d in data[exp]['date']], nam
 source_exp.add([humanize.naturaldelta(d) for d in data[exp]['expire']-data[exp]['date']], name='duration')
 
 # Scatter plot
-hover = HoverTool(tooltips=[('Date', '@datestring'), ('Key', '@key'), ('Syntax', '@syntax'), ('Duration', '@duration')])
+hover = HoverTool(tooltips=[('Date', '@datestring'), ('Title', '@title'), ('Key', '@key'), ('Syntax', '@syntax'), ('Size', '@size'), ('Duration', '@duration')])
+# TODO: show duration and title only if available
+crosshair = CrosshairTool(line_alpha=0.5)
+tap = TapTool(callback=OpenURL(url='@full_url'), renderers=[])
+# TODO: Instead of OpenURL, load and show paste content from the database directly!
+
 fig = figure(
 	width=1200, plot_height=500,
 	toolbar_location='above',
 	x_axis_type='datetime',
 	y_axis_type='log',
-	title='{} pastebins of the last 24 hours'.format(len(data)),
-	tools=['pan', 'xwheel_zoom', 'reset', hover]
+	title='{} pastebins of the last 12 hours'.format(len(data)),
+	tools=['pan', 'xwheel_zoom', 'reset', hover, crosshair, tap]
 )
 fig.xaxis.axis_label = 'UTC Time'
 fig.yaxis.axis_label = 'Paste length'
-nonexp_sc = fig.scatter('date', 'size', source=source_nonexp, color='green', size=3, alpha=0.5, legend='Not expiring pastes')
-exp_sc = fig.scatter('date', 'size', source=source_exp, color='red', size=3, alpha=0.5, legend='Expiring pastes')
+
+default_style = dict(fill_alpha=0.7, size=3, line_color=None)
+nonexp_sc = fig.scatter('date', 'size', source=source_nonexp, fill_color='green', legend='Not expiring pastes', **default_style)
+exp_sc = fig.scatter('date', 'size', source=source_exp, fill_color='red', legend='Expiring pastes', **default_style)
+# TODO: Plot all in one scatter but use the "tag" to distinguish
+
+exp_sc.selection_glyph = Circle(fill_color='red', fill_alpha=0.7, size=10, line_color=None)
+exp_sc.nonselection_glyph = Circle(fill_color='red', fill_alpha=0.1, size=3, line_color=None)
+nonexp_sc.selection_glyph = Circle(fill_color='green', fill_alpha=0.7, size=10, line_color=None)
+nonexp_sc.nonselection_glyph = Circle(fill_color='green', fill_alpha=0.1, size=3, line_color=None)
 
 tf = formatters.DatetimeTickFormatter()
 tf.seconds = '%H:%M:%S'; tf.minsec = '%H:%M:%S'; tf.minutes = '%H:%M:%S'
@@ -52,8 +69,6 @@ fig.legend.background_fill_alpha = 0.5
 
 
 # Horizontal histogram
-to_timestamp = np.vectorize(lambda x: (x - datetime.datetime(1970, 1, 1)).total_seconds())
-from_timestamp = np.vectorize(lambda x: datetime.datetime.fromtimestamp(x))
 date_exp, date_nonexp = np.array(list(data[exp]['date'])), np.array(list(data[~exp]['date']))
 hhist_exp, hedges_exp = np.histogram(to_timestamp(date_exp), bins=200)
 hhist_nonexp, hedges_nonexp = np.histogram(to_timestamp(date_nonexp), bins=200)
